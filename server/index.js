@@ -156,7 +156,11 @@ async function handle(req, res) {
       const target = q.get('url') || ''
       if (!target) return setJson(res, 400, { error: 'url required' })
       const raw = await stream(target)
-      return setJson(res, 200, raw)
+      const players = await Promise.all((raw.players || []).map(async (pl) => ({
+        ...pl,
+        url: await resolvePlayerUrl(pl.url),
+      })))
+      return setJson(res, 200, { ...raw, players })
     }
 
     if (serveStatic(req, res)) return
@@ -164,6 +168,56 @@ async function handle(req, res) {
   } catch (err) {
     return setJson(res, 500, { error: err.message, path: p })
   }
+}
+
+/* ------------------------------------------------------------------
+ * Player resolution: videonode.de pages are Cloudflare-challenged and
+ * refuse iframe embedding (X-Frame-Options: SAMEORIGIN). Each videonode
+ * wrapper page embeds a real player (abyssplayer / turbovidhls /
+ * gn1r5n / playcdn) that IS embeddable. We resolve the wrapper to its
+ * inner player URL (fetched through the CORS proxy) so the frontend can
+ * embed the player directly. Results are cached to avoid re-proxying.
+ * ------------------------------------------------------------------ */
+
+const PLAYER_CACHE = new Map() // url -> resolved player url
+const PLAYER_CACHE_MAX = 300
+
+async function resolvePlayerUrl(url) {
+  if (!url || !/^https?:\/\//.test(url)) return url
+  if (PLAYER_CACHE.has(url)) return PLAYER_CACHE.get(url)
+  let resolved = url
+
+  // Only videonode wrappers need resolving — other hosts embed fine as-is.
+  if (/videonode\.de/i.test(url)) {
+    try {
+      const proxy = (process.env.CORS_PROXY || 'https://uncors.netlify.app/').replace(/\/$/, '')
+      const wrapped = `${proxy}/?destination=${encodeURIComponent(url)}`
+      const res = await fetch(wrapped, {
+        headers: {
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
+          'accept': 'text/html',
+        },
+      })
+      if (res.ok) {
+        const html = await res.text()
+        const m = html.match(/<iframe[^>]+src=["']([^"']+)["']/i)
+        const inner = m && m[1]
+        if (inner && /^https?:\/\//.test(inner)) {
+          resolved = inner.replace(/&amp;/g, '&')
+        } else if (res.url && /^https?:\/\//.test(res.url) && res.url !== url) {
+          // Redirected (e.g. emturbovid.com -> turbovidhls.com) — use final URL.
+          resolved = res.url
+        }
+      }
+    } catch { /* keep original url */ }
+  }
+
+  if (PLAYER_CACHE.size >= PLAYER_CACHE_MAX) {
+    const first = PLAYER_CACHE.keys().next().value
+    PLAYER_CACHE.delete(first)
+  }
+  PLAYER_CACHE.set(url, resolved)
+  return resolved
 }
 
 /* Normalize a raw scraper item into the shape the frontend Title expects. */
