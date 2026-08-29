@@ -320,7 +320,8 @@ function WatchBody({ stream }: { stream: StreamData }) {
   const [active, setActive] = useState(0)
   const players = stream.players || []
   const src = players[active]?.url
-  const isIframe = /^https?:\/\//.test(src || '')
+  // Accept absolute player URLs and our own /pp/ reverse-proxy paths.
+  const isIframe = /^(https?:\/\/|\/pp\/)/.test(src || '')
 
   return <main className="watch-page"><div className="player">{isIframe ? <iframe className="player-embed" src={src} referrerPolicy="no-referrer" allow="autoplay; fullscreen; encrypted-media" allowFullScreen title="Player" /> : <div className="player-content"><span className="play-circle large"><Play size={28} fill="currentColor" /></span><p>{src ? 'Sumber video perlu dibuka' : 'Tidak ada server streaming'}</p><small>{src ? `URL: ${src}` : 'Server streaming tidak tersedia untuk konten ini.'}</small></div>}</div><div className="watch-info"><button className="back-link" onClick={() => go('/')}><ChevronLeft size={17} /> Back to browse</button><div className="watch-title"><div><span className="eyebrow">NOW WATCHING</span><h1>{stream.title || 'Streaming'}</h1><p>Pilih server untuk memutar konten.</p></div>{players.length > 1 && <div className="server-select"><span>Source</span>{players.map((p, i) => <button key={i} className={i === active ? 'server active' : 'server'} onClick={() => setActive(i)}>{p.server || `Server ${i + 1}`}</button>)}</div>}</div>{src && <div className="watch-fallback"><ExternalLink size={15} /><span>Player tidak muncul? Buka di tab baru:</span><a href={src} target="_blank" rel="noreferrer">{src}</a></div>}{stream.nav?.length > 0 && <div className="watch-nav"><h2>Navigasi Episode</h2><div>{stream.nav.map((n, i) => <button key={i} className="server" onClick={() => goToWatch(n.url)}>{n.text}</button>)}</div></div>}</div></main>
 }

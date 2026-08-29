@@ -163,10 +163,83 @@ async function handle(req, res) {
       return setJson(res, 200, { ...raw, players })
     }
 
+    // Reverse proxy for player hosts that block framing from our origin.
+    if (p.startsWith('/pp/')) {
+      const rest = p.slice(4) // /<host>/<path...>
+      const slash = rest.indexOf('/')
+      if (slash <= 0) return setJson(res, 400, { error: 'invalid proxy path' })
+      const host = rest.slice(0, slash).toLowerCase()
+      if (!PROXY_HOSTS.has(host)) return setJson(res, 403, { error: 'host not proxied' })
+      const restPath = rest.slice(slash) || '/'
+      const qs = url.searchParams.toString()
+      return proxyPlayer(host, restPath, qs, res)
+    }
+
     if (serveStatic(req, res)) return
     return setJson(res, 404, { error: 'not found', path: p })
   } catch (err) {
     return setJson(res, 500, { error: err.message, path: p })
+  }
+}
+
+/* ------------------------------------------------------------------
+ * Player proxy (/pp/<host>/<path>): some player hosts (playcdn.de for
+ * p2p, gn1r5n.org for cast) refuse embedding from unknown origins via
+ * CSP frame-ancestors / X-Frame-Options. We reverse-proxy those pages
+ * through our own origin: the backend fetches them with the original
+ * embedder's Referer (videonode.de) so the host treats us like the
+ * original site, strips frame-blocking headers, and serves the content
+ * from our domain. Relative URLs inside the page resolve back to the
+ * same /pp/ prefix, keeping everything same-origin for the browser.
+ * ------------------------------------------------------------------ */
+
+// Hosts that get reverse-proxied (embedding blocked from our origin).
+const PROXY_HOSTS = new Set(['playcdn.de', 'gn1r5n.org', 'www.playcdn.de'])
+const EMBED_REFERER = 'https://videonode.de/'
+
+function stripFrameBlocking(headers) {
+  const out = {}
+  for (const [k, v] of Object.entries(headers)) {
+    const key = k.toLowerCase()
+    if (key === 'x-frame-options') continue
+    if (key === 'content-security-policy') {
+      // Keep everything except frame-ancestors.
+      const kept = v.split(';').map((s) => s.trim()).filter((s) => s && !/^frame-ancestors/i.test(s)).join('; ')
+      if (kept) out[k] = kept
+      continue
+    }
+    if (key === 'content-security-policy-report-only') {
+      const kept = v.split(';').map((s) => s.trim()).filter((s) => s && !/^frame-ancestors/i.test(s)).join('; ')
+      if (kept) out[k] = kept
+      continue
+    }
+    out[k] = v
+  }
+  return out
+}
+
+async function proxyPlayer(host, restPath, qs, res) {
+  const target = `https://${host}${restPath}${qs ? `?${qs}` : ''}`
+  try {
+    const up = await fetch(target, {
+      redirect: 'follow',
+      headers: {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
+        'accept': '*/*',
+        'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8',
+        'referer': EMBED_REFERER,
+      },
+    })
+    const body = Buffer.from(await up.arrayBuffer())
+    const ctype = up.headers.get('content-type') || 'application/octet-stream'
+    const headers = stripFrameBlocking(Object.fromEntries(up.headers.entries()))
+    headers['access-control-allow-origin'] = '*'
+    headers['content-type'] = ctype
+    headers['content-length'] = String(body.length)
+    res.writeHead(up.status, headers)
+    res.end(body)
+  } catch (err) {
+    setJson(res, 502, { error: err.message })
   }
 }
 
@@ -210,6 +283,17 @@ async function resolvePlayerUrl(url) {
         }
       }
     } catch { /* keep original url */ }
+  }
+
+  // Hosts that block framing from unknown origins get reverse-proxied
+  // through /pp/ so the player page loads from our own origin.
+  if (/^https?:\/\//.test(resolved)) {
+    try {
+      const u = new URL(resolved)
+      if (PROXY_HOSTS.has(u.hostname)) {
+        resolved = `/pp/${u.hostname}${u.pathname}${u.search}`
+      }
+    } catch {}
   }
 
   if (PLAYER_CACHE.size >= PLAYER_CACHE_MAX) {

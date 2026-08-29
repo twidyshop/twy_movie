@@ -9,6 +9,10 @@ export default defineConfig({
         target: 'http://localhost:8787',
         changeOrigin: true,
       },
+      '/pp': {
+        target: 'http://localhost:8787',
+        changeOrigin: true,
+      },
     },
   },
 })
