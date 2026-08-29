@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   ArrowRight, ChevronLeft, ChevronRight, Clock3, ExternalLink, FileDown, Film, Loader2, Menu,
   Play, Search, Star, Tv, X,
@@ -130,14 +130,21 @@ function Home() {
   if (loading) return <Loading />
   if (error || !data) return <div className="page-content"><ErrorBox message={error || 'Gagal memuat home.'} /></div>
 
-  const hero = data.sections.find((s) => s.items.length)?.items[0] || data.latest[0]
   const known = [
     'Film Terbaru', 'Series Unggulan', 'Series Update', 'Top Bulan Ini', 'Rekomendasi Untukmu',
     'Nonton Bareng Keluarga', 'Korea Terbaru', 'Drakor Terbaru', 'Maraton Drakor',
   ]
 
+  // Slide hero: prefer "Top Bulan Ini", lalu section pertama, ditambah film terbaru.
+  const heroPool = [
+    ...(data.sections.find((s) => /top bulan/i.test(s.title))?.items || []),
+    ...(data.sections.find((s) => s.items.length)?.items || []),
+    ...data.latest,
+  ]
+  const slides = [...new Map(heroPool.map((i) => [i.id + i.title, i])).values()].slice(0, 5)
+
   return <>
-    {hero && <Hero title={hero} />}
+    {slides.length > 0 && <Hero items={slides} />}
     <main className="page-content">
       {data.sections.filter((s) => known.some((k) => s.title.toLowerCase().includes(k.toLowerCase())) || true).map((s, i) => (
         <Rail key={s.type + i} title={s.title || `Section ${i + 1}`} items={s.items.slice(0, 12)} onSeeAll={s.seeAll ? () => goSeeAll(s.seeAll) : undefined} />
@@ -155,9 +162,43 @@ function goSeeAll(url: string) {
   go(path.startsWith('/') && !path.startsWith('/api') ? path : '/latest')
 }
 
-function Hero({ title }: { title: Title }) {
+function Hero({ items }: { items: Title[] }) {
+  const [active, setActive] = useState(0)
+  const [paused, setPaused] = useState(false)
+  const count = items.length
   const pres = (v?: string | number) => (v === undefined || v === '' || v === 0) ? '–' : String(v)
-  return <section className="hero" style={{ backgroundImage: `linear-gradient(90deg, #090a0f 0%, rgba(9,10,15,.82) 36%, rgba(9,10,15,.14) 100%), linear-gradient(0deg, #090a0f 0%, transparent 36%), url(${title.poster})` }}><div className="hero-content"><span className="eyebrow"><span className="live-dot" /> {title.type === 'series' ? 'FEATURED SERIES' : 'FEATURED MOVIE'}</span><h1>{title.title}</h1><p className="hero-meta"><span>{pres(title.year)}</span><span>•</span><span className="rating"><Star size={14} fill="currentColor" /> {pres(title.rating)}</span><span>•</span><span>{title.quality || title.runtime}</span></p><p className="hero-description">{(title.genre || []).join(' · ') || `${title.quality} ${title.type}`}</p><div className="hero-actions"><button className="primary-button" onClick={() => goToDetail(title)}><Play size={17} fill="currentColor" /> Lihat detail</button><button className="ghost-button" onClick={() => goFile(title)}>Browse <ArrowRight size={16} /></button></div></div></section>
+
+  useEffect(() => {
+    if (count <= 1 || paused) return
+    const t = setInterval(() => setActive((a) => (a + 1) % count), 5000)
+    return () => clearInterval(t)
+  }, [count, paused])
+
+  const prev = () => setActive((a) => (a - 1 + count) % count)
+  const next = () => setActive((a) => (a + 1) % count)
+
+  // Swipe (touch)
+  const touchStart = useRef<number | null>(null)
+  const onTouchStart = (e: React.TouchEvent) => { touchStart.current = e.touches[0].clientX }
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (touchStart.current === null) return
+    const dx = e.changedTouches[0].clientX - touchStart.current
+    if (Math.abs(dx) > 50) dx < 0 ? next() : prev()
+    touchStart.current = null
+  }
+
+  return <section className="hero" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+    {items.map((title, i) => (
+      <div key={title.id + i} className={`hero-slide${i === active ? ' active' : ''}`} style={{ backgroundImage: `linear-gradient(90deg, #090a0f 0%, rgba(9,10,15,.82) 36%, rgba(9,10,15,.14) 100%), linear-gradient(0deg, #090a0f 0%, transparent 36%), url(${title.poster})` }} aria-hidden={i !== active}>
+        <div className="hero-content"><span className="eyebrow"><span className="live-dot" /> {title.type === 'series' ? 'FEATURED SERIES' : 'FEATURED MOVIE'}</span><h1>{title.title}</h1><p className="hero-meta"><span>{pres(title.year)}</span><span>•</span><span className="rating"><Star size={14} fill="currentColor" /> {pres(title.rating)}</span><span>•</span><span>{title.quality || title.runtime}</span></p><p className="hero-description">{(title.genre || []).join(' · ') || `${title.quality} ${title.type}`}</p><div className="hero-actions"><button className="primary-button" onClick={() => goToDetail(title)}><Play size={17} fill="currentColor" /> Lihat detail</button><button className="ghost-button" onClick={() => goFile(title)}>Browse <ArrowRight size={16} /></button></div></div>
+      </div>
+    ))}
+    {count > 1 && <>
+      <button className="hero-arrow prev" onClick={prev} aria-label="Sebelumnya"><ChevronLeft size={22} /></button>
+      <button className="hero-arrow next" onClick={next} aria-label="Berikutnya"><ChevronRight size={22} /></button>
+      <div className="hero-dots">{items.map((_, i) => <button key={i} className={`hero-dot${i === active ? ' active' : ''}`} onClick={() => setActive(i)} aria-label={`Slide ${i + 1}`} />)}</div>
+    </>}
+  </section>
 }
 
 function goFile(item: Title) { go(item.type === 'series' ? '/series' : '/movies') }
