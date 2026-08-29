@@ -230,6 +230,8 @@ function parseDetailCore($) {
   }
 }
 
+const abs = (href, base) => /^https?:\/\//.test(href) ? href : `${base}${href.startsWith('/') ? '' : '/'}${href}`
+
 export async function detailMovie(html, url) {
   const $ = cheerio.load(html)
   const core = parseDetailCore($)
@@ -238,7 +240,7 @@ export async function detailMovie(html, url) {
   $('.movie-action a').each((_, a) => {
     const href = $(a).attr('href') || ''
     const text = $(a).text().replace(/\s+/g, ' ').trim()
-    if (/^\/|^https?:\/\//.test(href) && !/^#/.test(href)) playLinks.push({ text, url: href })
+    if (/^\/|^https?:\/\//.test(href) && !/^#/.test(href)) playLinks.push({ text, url: abs(href, BASE) })
   })
 
   const players = []
@@ -286,7 +288,7 @@ export async function detailSeries(url) {
   $('.movie-action a').each((_, a) => {
     const href = $(a).attr('href') || ''
     const text = $(a).text().replace(/\s+/g, ' ').trim()
-    if (!/^(#|\/country|\/genre)/.test(href)) playLinks.push({ text, url: href })
+    if (!/^(#|\/country|\/genre)/.test(href)) playLinks.push({ text, url: abs(href, DRAMAMU) })
   })
 
   const related = []

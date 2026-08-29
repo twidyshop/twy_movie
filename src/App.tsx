@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import {
-  ArrowRight, ChevronLeft, ChevronRight, Clock3, FileDown, Film, Loader2, Menu,
+  ArrowRight, ChevronLeft, ChevronRight, Clock3, ExternalLink, FileDown, Film, Loader2, Menu,
   Play, Search, Star, Tv, X,
 } from 'lucide-react'
 import type { MetaItem, Title, TitleDetail, StreamData } from './data'
@@ -255,9 +255,11 @@ function Detail({ url }: { url: string }) {
 function DetailBody({ detail }: { detail: TitleDetail }) {
   const [season, setSeason] = useState(Object.keys(detail.seasons || {})[0] || '1')
   const episodes = detail.seasons?.[season] || []
+  // Movies: stream from the tv12 detail page — it contains #player-list.
+  // (detail.playAwal points to the dadadidi download page, which has no players.)
   const watchUrl = detail.type === 'series'
-    ? (episodes[0]?.url || detail.playAwal || detail.url)
-    : (detail.playAwal || (detail.players?.[0]?.url) || detail.url)
+    ? (episodes[0]?.url || detail.playAwal || detail.playTerbaru || detail.url)
+    : (detail.url)
   const poster = detail.poster
   const year = (detail.release || '').match(/\d{4}/)?.[0] || ''
   const rating = detail.rating || (detail.votes ? detail.votes : '')
@@ -279,7 +281,7 @@ function WatchBody({ stream }: { stream: StreamData }) {
   const src = players[active]?.url
   const isIframe = /^https?:\/\//.test(src || '')
 
-  return <main className="watch-page"><div className="player">{isIframe ? <iframe className="player-embed" src={src} allow="autoplay; fullscreen; encrypted-media" allowFullScreen title="Player" /> : <div className="player-content"><span className="play-circle large"><Play size={28} fill="currentColor" /></span><p>{src ? 'Sumber video perlu dibuka' : 'Tidak ada server streaming'}</p><small>{src ? `URL: ${src}` : 'Server streaming tidak tersedia untuk konten ini.'}</small></div>}<div className="player-controls"><span>—</span><div className="progress"><i /></div><span>HD</span></div></div><div className="watch-info"><button className="back-link" onClick={() => go('/')}><ChevronLeft size={17} /> Back to browse</button><div className="watch-title"><div><span className="eyebrow">NOW WATCHING</span><h1>{stream.title || 'Streaming'}</h1><p>Pilih server untuk memutar konten.</p></div>{players.length > 1 && <div className="server-select"><span>Source</span>{players.map((p, i) => <button key={i} className={i === active ? 'server active' : 'server'} onClick={() => setActive(i)}>{p.server || `Server ${i + 1}`}</button>)}</div>}</div>{stream.nav?.length > 0 && <div className="watch-nav"><h2>Navigasi Episode</h2><div>{stream.nav.map((n, i) => <button key={i} className="server" onClick={() => goToWatch(n.url)}>{n.text}</button>)}</div></div>}</div></main>
+  return <main className="watch-page"><div className="player">{isIframe ? <iframe className="player-embed" src={src} referrerPolicy="no-referrer" allow="autoplay; fullscreen; encrypted-media" allowFullScreen title="Player" /> : <div className="player-content"><span className="play-circle large"><Play size={28} fill="currentColor" /></span><p>{src ? 'Sumber video perlu dibuka' : 'Tidak ada server streaming'}</p><small>{src ? `URL: ${src}` : 'Server streaming tidak tersedia untuk konten ini.'}</small></div>}<div className="player-controls"><span>—</span><div className="progress"><i /></div><span>HD</span></div></div><div className="watch-info"><button className="back-link" onClick={() => go('/')}><ChevronLeft size={17} /> Back to browse</button><div className="watch-title"><div><span className="eyebrow">NOW WATCHING</span><h1>{stream.title || 'Streaming'}</h1><p>Pilih server untuk memutar konten.</p></div>{players.length > 1 && <div className="server-select"><span>Source</span>{players.map((p, i) => <button key={i} className={i === active ? 'server active' : 'server'} onClick={() => setActive(i)}>{p.server || `Server ${i + 1}`}</button>)}</div>}</div>{src && <div className="watch-fallback"><ExternalLink size={15} /><span>Player tidak muncul? Buka di tab baru:</span><a href={src} target="_blank" rel="noreferrer">{src}</a></div>}{stream.nav?.length > 0 && <div className="watch-nav"><h2>Navigasi Episode</h2><div>{stream.nav.map((n, i) => <button key={i} className="server" onClick={() => goToWatch(n.url)}>{n.text}</button>)}</div></div>}</div></main>
 }
 
 /* ---------- App ---------- */

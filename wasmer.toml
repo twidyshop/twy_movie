@@ -1,0 +1,29 @@
+[package]
+name = "bilakaum/guardian"
+version = "0.1.0"
+description = "Guardian streaming catalog — Node backend + built SPA, deployed on Wasmer Edge via Edge.js"
+readme = "README.md"
+entrypoint = "guardian"
+
+# Edge.js with an embedded QuickJS engine runs node:http apps on the standard WASI runner
+[dependencies]
+"wasmer/edgejs-quickjs" = "0.1.4"
+
+# Bundle the whole project (server + built SPA + node_modules) into the container
+[fs]
+"/app" = "."
+
+[[command]]
+name = "guardian"
+# The edgejs-quickjs "node" command (module "edge") is a drop-in node:http runtime
+module = "wasmer/edgejs-quickjs:edge"
+runner = "wasi"
+
+[command.annotations.wasi]
+# Run the Node backend — serves /api and the built SPA from /app/dist
+main-args = ["/app/server/index.js"]
+env = [
+  "HOME=/tmp",
+  "NODE_ENV=production",
+  "PORT=8080",
+]

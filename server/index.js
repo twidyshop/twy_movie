@@ -1,8 +1,12 @@
 // Guardian backend — proxies the lk21.js scraper as JSON endpoints.
 // Run: `npm run server` (default http://localhost:8787)
+// When a production build exists in ../dist, it also serves the SPA (for Wasmer Edge).
 
 import * as http from 'node:http'
 import { URL } from 'node:url'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   home,
   browse,
@@ -15,41 +19,49 @@ import {
 } from './lk21.js'
 
 const PORT = process.env.PORT || 8787
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const DIST_DIR = path.join(__dirname, '..', 'dist')
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.map': 'application/json',
+}
 
-/* Normalize a raw scraper item into the shape the frontend Title expects. */
-function normalizeItem(it, fallbackType = 'movie') {
-  const isSeries = !!it.episode || !!it.season || it.type === 'series'
-  return {
-    id: it.slug || '',
-    slug: it.slug || '',
-    type: isSeries ? 'series' : 'movie',
-    title: it.title || '',
-    year: parseInt(String(it.year || '').replace(/\D/g, ''), 10) || undefined,
-    rating: parseFloat(String(it.rating || '').replace(',', '.')) || 0,
-    quality: it.quality || '',
-    runtime: it.runtime || '',
-    genre: (it.genre || '').split(',').map((g) => g.trim()).filter(Boolean),
-    country: Array.isArray(it.country) ? it.country.join(', ') : (it.country || ''),
-    synopsis: it.synopsis || '',
-    poster: it.poster || '',
-    backdrop: it.poster || '',
-    accent: '#ee6849',
-    episodes: it.episode ? parseInt(String(it.episode).replace(/\D/g, ''), 10) : undefined,
-    url: it.url || '',
-    ep: it.episode || '',
-    season: it.season || '',
-    typeHint: it.type || '',
+/* Serve built SPA assets from ../dist, falling back to index.html for client routes. */
+function serveStatic(req, res) {
+  if (!fs.existsSync(DIST_DIR)) return false
+  const urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname)
+  let file = path.normalize(path.join(DIST_DIR, urlPath === '/' ? 'index.html' : urlPath))
+  if (!file.startsWith(DIST_DIR)) { file = path.join(DIST_DIR, 'index.html') }
+  if (fs.existsSync(file) && fs.statSync(file).isFile()) {
+    const ext = path.extname(file)
+    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' })
+    fs.createReadStream(file).pipe(res)
+    return true
   }
+  // SPA fallback for client-side routes
+  const indexFile = path.join(DIST_DIR, 'index.html')
+  if (urlPath.startsWith('/api')) return false
+  if (fs.existsSync(indexFile)) {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    fs.createReadStream(indexFile).pipe(res)
+    return true
+  }
+  return false
 }
 
-function setJson(res, status, data) {
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-  })
-  res.end(JSON.stringify(data))
-}
-
+// reuse the same handle async wrapper but let 404 fall through to SPA
 async function handle(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`)
   const p = url.pathname
@@ -147,11 +159,48 @@ async function handle(req, res) {
       return setJson(res, 200, raw)
     }
 
+    if (serveStatic(req, res)) return
     return setJson(res, 404, { error: 'not found', path: p })
   } catch (err) {
     return setJson(res, 500, { error: err.message, path: p })
   }
 }
+
+/* Normalize a raw scraper item into the shape the frontend Title expects. */
+function normalizeItem(it, fallbackType = 'movie') {
+  const isSeries = !!it.episode || !!it.season || it.type === 'series'
+  return {
+    id: it.slug || '',
+    slug: it.slug || '',
+    type: isSeries ? 'series' : 'movie',
+    title: it.title || '',
+    year: parseInt(String(it.year || '').replace(/\D/g, ''), 10) || undefined,
+    rating: parseFloat(String(it.rating || '').replace(',', '.')) || 0,
+    quality: it.quality || '',
+    runtime: it.runtime || '',
+    genre: (it.genre || '').split(',').map((g) => g.trim()).filter(Boolean),
+    country: Array.isArray(it.country) ? it.country.join(', ') : (it.country || ''),
+    synopsis: it.synopsis || '',
+    poster: it.poster || '',
+    backdrop: it.poster || '',
+    accent: '#ee6849',
+    episodes: it.episode ? parseInt(String(it.episode).replace(/\D/g, ''), 10) : undefined,
+    url: it.url || '',
+    ep: it.episode || '',
+    season: it.season || '',
+    typeHint: it.type || '',
+  }
+}
+
+function setJson(res, status, data) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Origin': '*',
+  })
+  res.end(JSON.stringify(data))
+}
+
+
 
 const server = http.createServer((req, res) => {
   handle(req, res).catch((err) => setJson(res, 500, { error: err.message }))

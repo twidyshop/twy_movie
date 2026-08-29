@@ -1,0 +1,5 @@
+kind: wasmer.io/App.v0
+owner: bilakaum
+name: guardian
+package: .
+app_id: da_2J7IAtxU5Prr
