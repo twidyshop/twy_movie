@@ -160,10 +160,13 @@ async function handle(req, res) {
         ...pl,
         url: await resolvePlayerUrl(pl.url),
       })))
-      // Utamakan server yang bisa di-embed & diputar: hydrax (paling stabil),
-      // lalu turbovip. Server lain tetap tersedia tapi tidak dijadikan default.
-      players.sort((a, b) => orderOf(a.server) - orderOf(b.server))
-      return setJson(res, 200, { ...raw, players })
+      // Hanya tampilkan server yang bisa di-embed & diputar dengan stabil: hydrax.
+      // Server lain (p2p/turbovip/cast) diblokir di sisi host masing-masing.
+      const only = players.filter((pl) => String(pl.server || '').toLowerCase() === 'hydrax')
+      return setJson(res, 200, {
+        ...raw,
+        players: only.length ? only : players,
+      })
     }
 
     // Reverse proxy for player hosts that block framing from our origin.
@@ -199,17 +202,6 @@ async function handle(req, res) {
 // Hosts that get reverse-proxied (embedding blocked from our origin).
 const PROXY_HOSTS = new Set(['playcdn.de', 'gn1r5n.org', 'www.playcdn.de'])
 const EMBED_REFERER = 'https://videonode.de/'
-
-// Server order for playback: hydrax first (reliable embed + real video),
-// then turbovip. Unknown/others sort last.
-function orderOf(server = '') {
-  const s = String(server).toLowerCase()
-  if (s === 'hydrax') return 0
-  if (s === 'turbovip' || s.includes('turbo')) return 1
-  if (s === 'p2p') return 2
-  if (s === 'cast') return 3
-  return 9
-}
 
 function stripFrameBlocking(headers) {
   const out = {}
