@@ -252,14 +252,64 @@ async function proxyPlayer(host, restPath, qs, res) {
 /* ------------------------------------------------------------------
  * Player resolution: videonode.de pages are Cloudflare-challenged and
  * refuse iframe embedding (X-Frame-Options: SAMEORIGIN). Each videonode
- * wrapper page embeds a real player (abyssplayer / turbovidhls /
- * gn1r5n / playcdn) that IS embeddable. We resolve the wrapper to its
- * inner player URL (fetched through the CORS proxy) so the frontend can
- * embed the player directly. Results are cached to avoid re-proxying.
+ * wrapper (/iframe3/<host>/<id>) fetches its real player from
+ * videonode.de/api.php (POST host=&id=) and injects it into an iframe.
+ * We call that same API server-side (through the CORS proxy, since our
+ * own IP gets the Cloudflare challenge) and return the real, embeddable
+ * player URL (abyssplayer / turbovidhls / ...) to the frontend.
+ * Results are cached — the returned id is stable for a given video.
  * ------------------------------------------------------------------ */
 
 const PLAYER_CACHE = new Map() // url -> resolved player url
 const PLAYER_CACHE_MAX = 300
+const CORS_PROXY_BASE = (process.env.CORS_PROXY || 'https://uncors.netlify.app/').replace(/\/$/, '')
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36'
+
+// A resolved player must never point back at the CORS proxy itself —
+// embedding the proxy URL renders "<proxy> refused to connect".
+function isProxyUrl(u) {
+  try {
+    return new URL(u).hostname === new URL(CORS_PROXY_BASE).hostname
+  } catch {
+    return false
+  }
+}
+
+async function fetchVideonodeApi(endpoint, body) {
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'accept': 'application/json, text/plain, */*',
+        'user-agent': BROWSER_UA,
+        'referer': 'https://videonode.de/',
+      },
+      body,
+    })
+    if (!res.ok) return ''
+    const data = await res.json().catch(() => null)
+    const embed = data && data.embedUrl
+    if (typeof embed !== 'string' || !/^https?:\/\//.test(embed)) return ''
+    if (isProxyUrl(embed)) return ''
+    return embed.replace(/&amp;/g, '&')
+  } catch {
+    return ''
+  }
+}
+
+/* videonode.de/iframe3/<host>/<id> -> POST /api.php {host,id} -> {embedUrl}
+ * Try the host directly first (some servers can reach it), then fall back to
+ * the CORS proxy (which passes Cloudflare's IP challenge). */
+async function resolveVideonodeEmbed(url) {
+  const m = url.match(/videonode\.de\/iframe\d*\/([^/?#]+)\/([^/?#]+)/i)
+  if (!m) return ''
+  const [, host, id] = m
+  const body = `host=${encodeURIComponent(host)}&id=${encodeURIComponent(id)}`
+  const direct = await fetchVideonodeApi('https://videonode.de/api.php', body)
+  if (direct) return direct
+  return fetchVideonodeApi(`${CORS_PROXY_BASE}/?destination=${encodeURIComponent('https://videonode.de/api.php')}`, body)
+}
 
 async function resolvePlayerUrl(url) {
   if (!url || !/^https?:\/\//.test(url)) return url
@@ -269,23 +319,17 @@ async function resolvePlayerUrl(url) {
   // Only videonode wrappers need resolving — other hosts embed fine as-is.
   if (/videonode\.de/i.test(url)) {
     try {
-      const proxy = (process.env.CORS_PROXY || 'https://uncors.netlify.app/').replace(/\/$/, '')
-      const wrapped = `${proxy}/?destination=${encodeURIComponent(url)}`
-      const res = await fetch(wrapped, {
-        headers: {
-          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
-          'accept': 'text/html',
-        },
-      })
-      if (res.ok) {
-        const html = await res.text()
-        const m = html.match(/<iframe[^>]+src=["']([^"']+)["']/i)
-        const inner = m && m[1]
-        if (inner && /^https?:\/\//.test(inner)) {
-          resolved = inner.replace(/&amp;/g, '&')
-        } else if (res.url && /^https?:\/\//.test(res.url) && res.url !== url) {
-          // Redirected (e.g. emturbovid.com -> turbovidhls.com) — use final URL.
-          resolved = res.url
+      const embed = await resolveVideonodeEmbed(url)
+      if (embed) resolved = embed
+      else {
+        // Fallback: scrape the wrapper HTML for a static iframe src.
+        const wrapped = `${CORS_PROXY_BASE}/?destination=${encodeURIComponent(url)}`
+        const res = await fetch(wrapped, { headers: { 'user-agent': BROWSER_UA, 'accept': 'text/html' } })
+        if (res.ok) {
+          const html = await res.text()
+          const m = html.match(/<iframe[^>]+src=["'](https?:\/\/[^"']+)["']/i)
+          const inner = m && m[1]
+          if (inner && !isProxyUrl(inner)) resolved = inner.replace(/&amp;/g, '&')
         }
       }
     } catch { /* keep original url */ }
@@ -301,6 +345,9 @@ async function resolvePlayerUrl(url) {
       }
     } catch {}
   }
+
+  // Never cache/hand back a proxy URL as the player source.
+  if (isProxyUrl(resolved)) resolved = url
 
   if (PLAYER_CACHE.size >= PLAYER_CACHE_MAX) {
     const first = PLAYER_CACHE.keys().next().value
