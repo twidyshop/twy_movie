@@ -24,7 +24,7 @@
 
 import * as cheerio from 'cheerio'
 
-const BASE = 'https://tv12.lk21official.cc'
+const BASE = (process.env.LK21_BASE_URL || 'https://tv12.lk21official.cc').replace(/\/$/, '')
 const DRAMAMU = 'https://dramamu.lk21.de'          // detail series
 const COVER = 'https://cover.showcdnx.com/wp-content/uploads/' // prefix poster hasil search
 const SEARCH_API = 'https://gudangvape.com/search.php'
@@ -45,8 +45,24 @@ const hdrs = {
 }
 
 async function get(url, extra = {}) {
-  const res = await fetch(proxied(url), { headers: { ...hdrs, ...extra } })
-  return res.text()
+  const res = await fetch(proxied(url), {
+    headers: { ...hdrs, ...extra },
+    redirect: 'follow',
+    signal: AbortSignal.timeout(20000),
+  })
+  const html = await res.text()
+  if (!res.ok) {
+    throw new Error(`Situs sumber mengembalikan HTTP ${res.status} (${res.url || url}).`)
+  }
+  const $ = cheerio.load(html)
+  const title = $('title').first().text().trim()
+  if (/just a moment|attention required|access denied|not found|404/i.test(title) && !$('.widget, article, .gallery-grid').length) {
+    throw new Error(`Situs sumber tidak mengirim katalog film (judul halaman: "${title || 'kosong'}", URL: ${res.url || url}).`)
+  }
+  if (!html || html.length < 500) {
+    throw new Error(`Respons situs sumber terlalu pendek untuk diproses (${html.length} karakter).`)
+  }
+  return html
 }
 
 async function getJSON(url) {
@@ -106,6 +122,9 @@ export async function home() {
   const latest = []
   $('#post-container article, .gallery-grid article').each((_, el) => latest.push(parseItem($, el)))
 
+  if (!sections.length && !latest.length) {
+    throw new Error('Halaman sumber berhasil dibuka, tetapi struktur katalog tidak dikenali. Selector scraper perlu diperbarui.')
+  }
   return { sections, latest }
 }
 
