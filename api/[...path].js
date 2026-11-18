@@ -1,5 +1,3 @@
-import { home, browse, getGenres, getCountries, getYears, search, detail, stream } from '../server/lk21.js'
-
 function normalizeItem(it) {
   const isSeries = !!it.episode || !!it.season || it.type === 'series'
   return {
@@ -13,44 +11,52 @@ function normalizeItem(it) {
     url: it.url || '', ep: it.episode || '', season: it.season || '', typeHint: it.type || '',
   }
 }
-const json = (res, status, data) => { res.status(status).json(data) }
+const json = (res, status, data) => res.status(status).json(data)
 
 export default async function handler(req, res) {
-  const path = '/' + (Array.isArray(req.query.path) ? req.query.path.join('/') : (req.query.path || ''))
-  const q = new URL(req.url, 'https://vercel.invalid').searchParams
+  const requestUrl = new URL(req.url || '/', 'https://vercel.invalid')
+  const queryPath = req.query?.path
+  const pathParts = Array.isArray(queryPath) ? queryPath : (queryPath ? [queryPath] : [])
+  const urlPath = requestUrl.pathname.replace(/^\/api(?=\/|$)/, '')
+  const path = '/' + (pathParts.length ? pathParts.join('/') : urlPath.replace(/^\/+|\/+$/g, ''))
+  const q = requestUrl.searchParams
   const page = parseInt(q.get('page') || '1', 10) || 1
   const type = q.get('type') || ''
+
   if (path === '/health') return json(res, 200, { ok: true })
+
   try {
-    const { home, browse, getGenres, getCountries, getYears, search, detail, stream } = await import('../server/lk21.js')
+    const scraper = await import('../server/lk21.js')
     if (path === '/home') {
-      const raw = await home()
-      return json(res, 200, { sections: (raw.sections || []).map(s => ({ type:s.type,title:s.title,seeAll:s.seeAll,items:(s.items||[]).map(normalizeItem) })), latest:(raw.latest||[]).map(normalizeItem) })
+      const raw = await scraper.home()
+      return json(res, 200, { sections: (raw.sections || []).map(s => ({ type: s.type, title: s.title, seeAll: s.seeAll, items: (s.items || []).map(normalizeItem) })), latest: (raw.latest || []).map(normalizeItem) })
     }
     if (path.startsWith('/browse')) {
       const browsePath = path.replace(/^\/browse/, '') || '/populer'
-      const raw = await browse(browsePath, page, type)
-      return json(res, 200, { title:raw.title,page:raw.page,totalPages:raw.totalPages,items:(raw.items||[]).map(normalizeItem),path:browsePath })
+      const raw = await scraper.browse(browsePath, page, type)
+      return json(res, 200, { title: raw.title, page: raw.page, totalPages: raw.totalPages, items: (raw.items || []).map(normalizeItem), path: browsePath })
     }
-    if (path === '/genres') { const items=await getGenres(); return json(res,200,{items,total:items.length}) }
-    if (path === '/countries') { const items=await getCountries(); return json(res,200,{items,total:items.length}) }
-    if (path === '/years') { const items=await getYears(); return json(res,200,{items,total:items.length}) }
+    if (path === '/genres') { const items = await scraper.getGenres(); return json(res, 200, { items, total: items.length }) }
+    if (path === '/countries') { const items = await scraper.getCountries(); return json(res, 200, { items, total: items.length }) }
+    if (path === '/years') { const items = await scraper.getYears(); return json(res, 200, { items, total: items.length }) }
     if (path === '/search') {
-      const raw=await search(q.get('q')||'',page)
-      return json(res,200,{query:raw.query,page:raw.page,totalPages:raw.totalPages||1,items:(raw.items||[]).map(normalizeItem)})
+      const raw = await scraper.search(q.get('q') || '', page)
+      return json(res, 200, { query: raw.query, page: raw.page, totalPages: raw.totalPages || 1, items: (raw.items || []).map(normalizeItem) })
     }
     if (path === '/detail') {
-      const target=q.get('url')||''; if(!target) return json(res,400,{error:'url required'})
-      const raw=await detail(target)
-      return json(res,200,{url:target,type:raw.type,title:raw.title,rating:raw.rating,votes:raw.votes||raw.votesMeta,genres:raw.genres||[],country:raw.country||[],director:raw.director,cast:raw.cast||[],release:raw.release,updated:raw.updated,synopsis:raw.synopsis,poster:raw.poster,trailer:raw.trailer,download:raw.download||'',playAwal:raw.playAwal||'',playTerbaru:raw.playTerbaru||'',players:raw.players||[],seasons:raw.seasons||{},totalEpisodes:raw.totalEpisodes||0,latestEpisode:raw.latestEpisode||'',related:(raw.related||[]).map(normalizeItem)})
+      const target = q.get('url') || ''
+      if (!target) return json(res, 400, { error: 'url required' })
+      const raw = await scraper.detail(target)
+      return json(res, 200, { url: target, type: raw.type, title: raw.title, rating: raw.rating, votes: raw.votes || raw.votesMeta, genres: raw.genres || [], country: raw.country || [], director: raw.director, cast: raw.cast || [], release: raw.release, updated: raw.updated, synopsis: raw.synopsis, poster: raw.poster, trailer: raw.trailer, download: raw.download || '', playAwal: raw.playAwal || '', playTerbaru: raw.playTerbaru || '', players: raw.players || [], seasons: raw.seasons || {}, totalEpisodes: raw.totalEpisodes || 0, latestEpisode: raw.latestEpisode || '', related: (raw.related || []).map(normalizeItem) })
     }
     if (path === '/stream') {
-      const target=q.get('url')||''; if(!target) return json(res,400,{error:'url required'})
-      return json(res,200,await stream(target))
+      const target = q.get('url') || ''
+      if (!target) return json(res, 400, { error: 'url required' })
+      return json(res, 200, await scraper.stream(target))
     }
-    return json(res,404,{error:'not found',path})
+    return json(res, 404, { error: 'not found', path })
   } catch (e) {
-    console.error('API error:',path,e)
-    return json(res,500,{error:e?.message||'Internal server error',path})
+    console.error('API error:', path, e)
+    return json(res, 500, { error: e?.message || 'Internal server error', path })
   }
 }
