@@ -1,16 +1,15 @@
 import { home, browse, getGenres, getCountries, getYears, search, detail, stream } from '../server/lk21.js'
 
-const BASE = 'https://tv12.lk21official.cc'
 function normalizeItem(it) {
   const isSeries = !!it.episode || !!it.season || it.type === 'series'
   return {
     id: it.slug || '', slug: it.slug || '', type: isSeries ? 'series' : 'movie',
-    title: it.title || '', year: parseInt(String(it.year || '').replace(/\\D/g, ''), 10) || undefined,
+    title: it.title || '', year: parseInt(String(it.year || '').replace(/\D/g, ''), 10) || undefined,
     rating: parseFloat(String(it.rating || '').replace(',', '.')) || 0, quality: it.quality || '',
     runtime: it.runtime || '', genre: (it.genre || '').split(',').map(g => g.trim()).filter(Boolean),
     country: Array.isArray(it.country) ? it.country.join(', ') : (it.country || ''),
     synopsis: it.synopsis || '', poster: it.poster || '', backdrop: it.poster || '',
-    accent: '#ee6849', episodes: it.episode ? parseInt(String(it.episode).replace(/\\D/g, ''), 10) : undefined,
+    accent: '#ee6849', episodes: it.episode ? parseInt(String(it.episode).replace(/\D/g, ''), 10) : undefined,
     url: it.url || '', ep: it.episode || '', season: it.season || '', typeHint: it.type || '',
   }
 }
@@ -21,14 +20,15 @@ export default async function handler(req, res) {
   const q = new URL(req.url, 'https://vercel.invalid').searchParams
   const page = parseInt(q.get('page') || '1', 10) || 1
   const type = q.get('type') || ''
+  if (path === '/health') return json(res, 200, { ok: true })
   try {
-    if (path === '/health') return json(res, 200, { ok: true })
+    const { home, browse, getGenres, getCountries, getYears, search, detail, stream } = await import('../server/lk21.js')
     if (path === '/home') {
       const raw = await home()
       return json(res, 200, { sections: (raw.sections || []).map(s => ({ type:s.type,title:s.title,seeAll:s.seeAll,items:(s.items||[]).map(normalizeItem) })), latest:(raw.latest||[]).map(normalizeItem) })
     }
     if (path.startsWith('/browse')) {
-      const browsePath = path.replace(/^\\/browse/, '') || '/populer'
+      const browsePath = path.replace(/^\/browse/, '') || '/populer'
       const raw = await browse(browsePath, page, type)
       return json(res, 200, { title:raw.title,page:raw.page,totalPages:raw.totalPages,items:(raw.items||[]).map(normalizeItem),path:browsePath })
     }
